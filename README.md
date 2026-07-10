@@ -27,7 +27,7 @@ whether transportation methods differ by state, age group, and sex.
 
 # Team Member
 
-This project was completed individually by Shreya Nallapeta.
+Shreya Nallapeta.
 
 # Research Questions
 
