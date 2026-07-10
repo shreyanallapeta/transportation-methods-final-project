@@ -22,7 +22,7 @@ The goal of this project is to explore how workers travel to work and whether tr
 
 # Team Member
 
-This project was completed individually by Shreya Nallapeta.
+Shreya Nallapeta.
 
 # Research Questions
 
