@@ -67,9 +67,13 @@ selected_states <- c("IA", "CA", "NY", "TX", "IL")
 
 dir.create("data", showWarnings = FALSE)
 
+github_dataset_file <- "pums_transportation_dataset.csv"
 raw_file <- "data/pums_raw_selected_states.csv"
 
-if (file.exists(raw_file)) {
+if (file.exists(github_dataset_file)) {
+  pums_clean <- read_csv(github_dataset_file, show_col_types = FALSE)
+  pums_raw <- pums_clean
+} else if (file.exists(raw_file)) {
   pums_raw <- read_csv(raw_file, show_col_types = FALSE)
 } else {
   pums_raw <- map_dfr(
