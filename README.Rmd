@@ -121,6 +121,7 @@ The first data cleaning steps are:
 8. Create broader transportation groups for easier comparison.
 
 ```{r clean-data}
+if (!exists("pums_clean")) {
 state_lookup <- tibble(
   state_abbr = c("IA", "CA", "NY", "TX", "IL"),
   state_label = c("Iowa", "California", "New York", "Texas", "Illinois")
@@ -180,9 +181,8 @@ pums_clean <- pums_raw %>%
       transportation == "Worked from home" ~ "Worked from home",
       TRUE ~ "Other"
     )
-  )
-
 write_csv(pums_clean, "data/pums_clean_transportation.csv")
+}
 ```
 
 ```{r cleaned-count}
