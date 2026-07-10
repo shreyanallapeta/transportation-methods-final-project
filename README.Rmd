@@ -1,0 +1,494 @@
+---
+title: "Transportation Methods Used by Workers Across U.S. States"
+author: "Shreya Nallapeta"
+date: "`r Sys.Date()`"
+output: github_document
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidycensus)
+library(scales)
+library(knitr)
+```
+
+# Introduction
+
+Transportation is part of everyday life for workers. Some workers drive, some use public transportation, some walk or bike, and some work from home. These choices can be related to location, age, sex, access to public transportation, and work opportunities.
+
+For this project, I analyze transportation methods used by workers across selected U.S. states using the American Community Survey Public Use Microdata Sample, also known as ACS PUMS. The selected states are Iowa, California, New York, Texas, and Illinois.
+
+The goal of this project is to explore how workers travel to work and whether transportation methods differ by state, age group, and sex.
+
+# Team Member
+
+This project was completed individually by Shreya Nallapeta.
+
+# Research Questions
+
+This project addresses the following questions:
+
+1. What transportation methods are most commonly used by workers in the selected U.S. states?
+2. How do transportation methods differ across Iowa, California, New York, Texas, and Illinois?
+3. Which states have higher shares of public transportation use and working from home?
+4. How do transportation methods vary by age group?
+5. How do transportation methods vary by sex?
+
+# Data
+
+The dataset used for this project is the **American Community Survey 1-Year Public Use Microdata Sample**, also known as **ACS PUMS**.
+
+Dataset source: U.S. Census Bureau ACS PUMS  
+
+Dataset link: https://www.census.gov/programs-surveys/acs/microdata.html
+
+ACS PUMS contains person-level and household-level records. This dataset is useful for this project because it includes worker characteristics, commuting method, age, sex, state, and survey weights.
+
+The main variables used in this project are:
+
+| Variable | Description |
+|---|---|
+| `JWTRNS` | Means of transportation to work |
+| `AGEP` | Age |
+| `SEX` | Sex |
+| `PWGTP` | Person-level survey weight |
+| `ESR` | Employment status |
+| `state_abbr` | State abbreviation added during loading |
+
+# Data Loading
+
+The code checks whether the raw data file already exists in the `data` folder. If it exists, the report reads the saved file. If it does not exist, the report downloads the data using `tidycensus`.
+
+A Census API key may be required for the first download. The key should be installed locally in RStudio and should not be written directly in this file.
+
+```{r load-data, message=FALSE, warning=FALSE}
+acs_year <- 2023
+selected_states <- c("IA", "CA", "NY", "TX", "IL")
+
+dir.create("data", showWarnings = FALSE)
+
+raw_file <- "data/pums_raw_selected_states.csv"
+
+if (file.exists(raw_file)) {
+  pums_raw <- read_csv(raw_file, show_col_types = FALSE)
+} else {
+  pums_raw <- map_dfr(
+    selected_states,
+    function(state_name) {
+      get_pums(
+        variables = c("JWTRNS", "AGEP", "SEX", "PWGTP", "ESR"),
+        survey = "acs1",
+        year = acs_year,
+        state = state_name,
+        recode = FALSE
+      ) %>%
+        mutate(state_abbr = state_name)
+    }
+  )
+
+  write_csv(pums_raw, raw_file)
+}
+```
+
+# First Look at the Data
+
+```{r first-look}
+glimpse(pums_raw)
+```
+
+```{r raw-count}
+raw_row_count <- nrow(pums_raw)
+raw_row_count
+```
+
+The raw dataset contains `r comma(raw_row_count)` rows before cleaning.
+
+# Data Cleaning
+
+The first data cleaning steps are:
+
+1. Keep records with valid transportation method values.
+2. Keep workers age 16 and older.
+3. Recode transportation method codes into readable labels.
+4. Recode sex into readable labels.
+5. Recode state abbreviations into full state names.
+6. Create age groups.
+7. Use person weights for weighted summaries.
+8. Create broader transportation groups for easier comparison.
+
+```{r clean-data}
+state_lookup <- tibble(
+  state_abbr = c("IA", "CA", "NY", "TX", "IL"),
+  state_label = c("Iowa", "California", "New York", "Texas", "Illinois")
+)
+
+public_transit_methods <- c(
+  "Bus or trolley bus",
+  "Streetcar or trolley car",
+  "Subway or elevated rail",
+  "Railroad",
+  "Ferryboat"
+)
+
+pums_clean <- pums_raw %>%
+  mutate(
+    JWTRNS_clean = stringr::str_pad(as.character(JWTRNS), width = 2, pad = "0"),
+    SEX_clean = as.character(SEX)
+  ) %>%
+  left_join(state_lookup, by = "state_abbr") %>%
+  filter(!is.na(JWTRNS_clean)) %>%
+  filter(JWTRNS_clean %in% c("01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12")) %>%
+  filter(AGEP >= 16) %>%
+  mutate(
+    transportation = case_when(
+      JWTRNS_clean == "01" ~ "Car, truck, or van",
+      JWTRNS_clean == "02" ~ "Bus or trolley bus",
+      JWTRNS_clean == "03" ~ "Streetcar or trolley car",
+      JWTRNS_clean == "04" ~ "Subway or elevated rail",
+      JWTRNS_clean == "05" ~ "Railroad",
+      JWTRNS_clean == "06" ~ "Ferryboat",
+      JWTRNS_clean == "07" ~ "Taxicab",
+      JWTRNS_clean == "08" ~ "Motorcycle",
+      JWTRNS_clean == "09" ~ "Bicycle",
+      JWTRNS_clean == "10" ~ "Walked",
+      JWTRNS_clean == "11" ~ "Worked from home",
+      JWTRNS_clean == "12" ~ "Other method",
+      TRUE ~ "Unknown"
+    ),
+    sex_label = case_when(
+      SEX_clean == "1" ~ "Male",
+      SEX_clean == "2" ~ "Female",
+      TRUE ~ "Unknown"
+    ),
+    age_group = case_when(
+      AGEP < 25 ~ "Under 25",
+      AGEP >= 25 & AGEP < 35 ~ "25-34",
+      AGEP >= 35 & AGEP < 45 ~ "35-44",
+      AGEP >= 45 & AGEP < 55 ~ "45-54",
+      AGEP >= 55 & AGEP < 65 ~ "55-64",
+      AGEP >= 65 ~ "65+",
+      TRUE ~ "Unknown"
+    ),
+    transportation_group = case_when(
+      transportation == "Car, truck, or van" ~ "Car-based",
+      transportation %in% public_transit_methods ~ "Public transportation",
+      transportation %in% c("Walked", "Bicycle") ~ "Active transportation",
+      transportation == "Worked from home" ~ "Worked from home",
+      TRUE ~ "Other"
+    )
+  )
+
+write_csv(pums_clean, "data/pums_clean_transportation.csv")
+```
+
+```{r cleaned-count}
+cleaned_row_count <- nrow(pums_clean)
+cleaned_row_count
+```
+
+After cleaning, the dataset contains `r comma(cleaned_row_count)` rows with valid transportation information.
+
+# Marginal Summaries
+
+```{r numeric-summary}
+pums_clean %>%
+  summarise(
+    number_of_records = n(),
+    minimum_age = min(AGEP, na.rm = TRUE),
+    median_age = median(AGEP, na.rm = TRUE),
+    mean_age = mean(AGEP, na.rm = TRUE),
+    maximum_age = max(AGEP, na.rm = TRUE),
+    mean_person_weight = mean(PWGTP, na.rm = TRUE)
+  ) %>%
+  kable()
+```
+
+```{r state-summary}
+state_summary <- pums_clean %>%
+  group_by(state_label) %>%
+  summarise(
+    unweighted_count = n(),
+    weighted_workers = sum(PWGTP, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(weighted_percent = weighted_workers / sum(weighted_workers)) %>%
+  arrange(desc(weighted_workers))
+
+state_summary %>%
+  mutate(
+    weighted_workers = comma(weighted_workers),
+    weighted_percent = percent(weighted_percent, accuracy = 0.1)
+  ) %>%
+  kable()
+```
+
+# Main Results
+
+## Result 1: Most Common Transportation Methods
+
+```{r transportation-summary}
+transportation_summary <- pums_clean %>%
+  group_by(transportation) %>%
+  summarise(
+    unweighted_count = n(),
+    weighted_workers = sum(PWGTP, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(weighted_percent = weighted_workers / sum(weighted_workers)) %>%
+  arrange(desc(weighted_workers))
+
+transportation_summary %>%
+  mutate(
+    weighted_workers = comma(weighted_workers),
+    weighted_percent = percent(weighted_percent, accuracy = 0.1)
+  ) %>%
+  kable()
+```
+
+```{r transportation-plot, message=FALSE, warning=FALSE}
+transportation_summary %>%
+  ggplot(aes(x = reorder(transportation, weighted_percent), y = weighted_percent)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format()) +
+  labs(
+    title = "Transportation Methods Used by Workers",
+    x = "Transportation Method",
+    y = "Weighted Percent of Workers"
+  )
+```
+
+The chart shows the overall distribution of transportation methods among workers in the selected states.
+
+## Result 2: Transportation Methods by State
+
+```{r transportation-by-state}
+transportation_by_state <- pums_clean %>%
+  group_by(state_label, transportation) %>%
+  summarise(
+    weighted_workers = sum(PWGTP, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  group_by(state_label) %>%
+  mutate(state_percent = weighted_workers / sum(weighted_workers)) %>%
+  ungroup()
+
+transportation_by_state %>%
+  arrange(state_label, desc(state_percent)) %>%
+  mutate(
+    weighted_workers = comma(weighted_workers),
+    state_percent = percent(state_percent, accuracy = 0.1)
+  ) %>%
+  kable()
+```
+
+```{r state-plot, message=FALSE, warning=FALSE}
+transportation_by_state %>%
+  filter(transportation %in% c(
+    "Car, truck, or van",
+    "Bus or trolley bus",
+    "Subway or elevated rail",
+    "Walked",
+    "Bicycle",
+    "Worked from home"
+  )) %>%
+  ggplot(aes(x = state_label, y = state_percent, fill = transportation)) +
+  geom_col(position = "dodge") +
+  scale_y_continuous(labels = percent_format()) +
+  labs(
+    title = "Selected Transportation Methods by State",
+    x = "State",
+    y = "Weighted Percent of Workers",
+    fill = "Transportation Method"
+  ) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+This chart compares selected transportation methods across states.
+
+## Result 3: Public Transportation Comparison
+
+```{r public-transit-summary}
+public_transit_summary <- transportation_by_state %>%
+  mutate(
+    transit_group = if_else(
+      transportation %in% public_transit_methods,
+      "Public transportation",
+      "Other transportation"
+    )
+  ) %>%
+  group_by(state_label, transit_group) %>%
+  summarise(weighted_workers = sum(weighted_workers, na.rm = TRUE), .groups = "drop") %>%
+  group_by(state_label) %>%
+  mutate(state_percent = weighted_workers / sum(weighted_workers)) %>%
+  ungroup() %>%
+  filter(transit_group == "Public transportation") %>%
+  arrange(desc(state_percent))
+
+public_transit_summary %>%
+  mutate(
+    weighted_workers = comma(weighted_workers),
+    state_percent = percent(state_percent, accuracy = 0.1)
+  ) %>%
+  kable()
+```
+
+```{r public-transit-plot, message=FALSE, warning=FALSE}
+public_transit_summary %>%
+  ggplot(aes(x = reorder(state_label, state_percent), y = state_percent)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format()) +
+  labs(
+    title = "Share of Workers Using Public Transportation",
+    x = "State",
+    y = "Weighted Percent of Workers"
+  )
+```
+
+This section compares which selected states have a larger share of workers using public transportation.
+
+## Result 4: Working From Home Comparison
+
+```{r work-from-home-summary}
+work_from_home_summary <- transportation_by_state %>%
+  filter(transportation == "Worked from home") %>%
+  arrange(desc(state_percent))
+
+work_from_home_summary %>%
+  mutate(
+    weighted_workers = comma(weighted_workers),
+    state_percent = percent(state_percent, accuracy = 0.1)
+  ) %>%
+  kable()
+```
+
+```{r work-from-home-plot, message=FALSE, warning=FALSE}
+work_from_home_summary %>%
+  ggplot(aes(x = reorder(state_label, state_percent), y = state_percent)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format()) +
+  labs(
+    title = "Share of Workers Who Worked From Home",
+    x = "State",
+    y = "Weighted Percent of Workers"
+  )
+```
+
+Working from home is included as a transportation category because these workers do not physically commute to work.
+
+## Result 5: Transportation Method by Age Group
+
+```{r age-transportation-summary}
+age_transportation_summary <- pums_clean %>%
+  group_by(age_group, transportation_group) %>%
+  summarise(weighted_workers = sum(PWGTP, na.rm = TRUE), .groups = "drop") %>%
+  group_by(age_group) %>%
+  mutate(age_percent = weighted_workers / sum(weighted_workers)) %>%
+  ungroup()
+
+age_transportation_summary %>%
+  mutate(
+    weighted_workers = comma(weighted_workers),
+    age_percent = percent(age_percent, accuracy = 0.1)
+  ) %>%
+  kable()
+```
+
+```{r age-transportation-plot, message=FALSE, warning=FALSE}
+age_transportation_summary %>%
+  ggplot(aes(x = age_group, y = age_percent, fill = transportation_group)) +
+  geom_col(position = "fill") +
+  scale_y_continuous(labels = percent_format()) +
+  labs(
+    title = "Transportation Method Groups by Age Group",
+    x = "Age Group",
+    y = "Percent of Workers",
+    fill = "Transportation Group"
+  )
+```
+
+This chart compares broader commuting categories across age groups.
+
+## Result 6: Transportation Method by Sex
+
+```{r sex-transportation-summary}
+sex_transportation_summary <- pums_clean %>%
+  group_by(sex_label, transportation_group) %>%
+  summarise(weighted_workers = sum(PWGTP, na.rm = TRUE), .groups = "drop") %>%
+  group_by(sex_label) %>%
+  mutate(sex_percent = weighted_workers / sum(weighted_workers)) %>%
+  ungroup()
+
+sex_transportation_summary %>%
+  mutate(
+    weighted_workers = comma(weighted_workers),
+    sex_percent = percent(sex_percent, accuracy = 0.1)
+  ) %>%
+  kable()
+```
+
+```{r sex-transportation-plot, message=FALSE, warning=FALSE}
+sex_transportation_summary %>%
+  ggplot(aes(x = sex_label, y = sex_percent, fill = transportation_group)) +
+  geom_col(position = "fill") +
+  scale_y_continuous(labels = percent_format()) +
+  labs(
+    title = "Transportation Method Groups by Sex",
+    x = "Sex",
+    y = "Percent of Workers",
+    fill = "Transportation Group"
+  )
+```
+
+This section compares transportation method groups by sex.
+
+# Skepticism and Limitations
+
+There are several limitations to this analysis.
+
+First, this project only uses five selected states: Iowa, California, New York, Texas, and Illinois. These states provide regional variety, but they do not represent every state in the United States.
+
+Second, the project uses ACS survey data. Survey data is useful because it covers many people, but it is still based on sampled responses and survey weights. The weighted estimates should be interpreted as estimates rather than exact counts.
+
+Third, the transportation variable shows the usual means of transportation to work. It does not explain why a worker chose that transportation method.
+
+Fourth, this analysis is exploratory. It can show patterns and differences, but it cannot prove that age, sex, or state causes a person to choose a specific transportation method.
+
+Finally, the project groups some transportation methods into broader categories. This makes charts easier to read, but it also removes some detail from the original categories.
+
+# Conclusion
+
+This project analyzed transportation methods used by workers in Iowa, California, New York, Texas, and Illinois using ACS PUMS data. The analysis showed that transportation choices vary across states and demographic groups.
+
+The most common transportation method overall was car-based transportation. However, the share of workers using public transportation, walking, biking, or working from home differed by state. These differences suggest that commuting patterns may be connected to state-level factors such as urban development, public transportation access, and work-from-home opportunities.
+
+The age and sex comparisons also showed that commuting patterns are not identical across demographic groups. Grouping transportation methods into broader categories made it easier to compare overall patterns.
+
+Overall, this project shows that commuting behavior is not the same everywhere. Transportation methods vary across states and groups, and ACS PUMS provides a useful dataset for exploring these differences.
+
+# Reproducibility
+
+This report is fully reproducible from the R Markdown file `README.Rmd`.
+
+The main R packages used are:
+
+```{r package-list}
+packages_used <- tibble(
+  package = c("tidyverse", "tidycensus", "scales", "knitr"),
+  purpose = c(
+    "Data cleaning, summarizing, and plotting",
+    "Downloading ACS PUMS data",
+    "Formatting percentages and large numbers",
+    "Formatting tables"
+  )
+)
+
+packages_used %>%
+  kable()
+```
+
+The project uses ACS PUMS data downloaded with the `tidycensus` package. A Census API key may be required to reproduce the download step. The API key should be installed locally in RStudio and should not be written directly in this file or uploaded to GitHub.
+
+The report also saves local CSV copies of the raw and cleaned data in the `data` folder so the project can be rerun more easily after the first download.
